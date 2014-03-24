@@ -28,18 +28,18 @@ echo(<<"GET">>, M, Id, Req) ->
             run_ring(Id, M_), 
             cowboy_req:reply(200, [
                                    {<<"content-type">>, <<"text/plain; charset=utf-8">>}
-	], Echo, Req);
+	], "ok", Req);
          true ->
             cowboy_req:reply(400, [], <<"M parametr must be integer.">>, Req)
      end;   
 
-echo(_, _, Req) ->
+echo(_, _, _,Req) ->
 	%% Method not allowed.
 	cowboy_req:reply(405, Req).
 
 terminate(_Reason, _Req, _State) ->
 	ok.
 
-run_ring(Id, M) ->
-    A = ets:match(pending, {Id,'$1', '_'}),
+run_ring(Id, _) ->
+    _ = ets:match(pending, {Id,'$1', '_'}),
     ok.

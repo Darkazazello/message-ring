@@ -32,7 +32,7 @@ init(_Args) ->
     Shutdown = brutal_kill,
     Type = worker,
 
-    ringStart = {ring_handler, {ring_handler, start_link, []},
+    RingStart = {ring_handler, {ring_handler, start_link, []},
                  Restart, Shutdown, Type, [ring_handler]},
-    {ok, {SupFlags, [ringStart]}}.
+    {ok, {SupFlags, [RingStart]}}.
 

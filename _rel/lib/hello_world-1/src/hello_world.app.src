@@ -4,7 +4,7 @@
 	{description, "Cowboy Hello World example."},
 	{vsn, "1"},
 	{modules, []},
-	{registered, [hello_world_sup]},
+	{registered, [hello_world_sup,main_sup]},
 	{applications, [
 		kernel,
 		stdlib,

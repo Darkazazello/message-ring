@@ -18,6 +18,7 @@
 -define(SERVER, ?MODULE). 
 
 -record(state, {countProcess, nextPid, startTime, endTime}).
+-record(log, {pid, n, m, startTime, endTime}).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -31,7 +32,7 @@ init(_Args) ->
 handle_call(stop, _From, State) ->
     {stop, normal, shutdown_ok, State};
 
-handle_call({init,NextPid, N}, _From, State) ->
+handle_call({init,NextPid, N}, _From, _State) ->
     Reply = ok,
     {reply, Reply, #state{countProcess = N, nextPid = NextPid}}.
 
@@ -39,15 +40,20 @@ handle_cast({run, Current, M}, #state{nextPid=Pid, countProcess = N, startTime =
     if
         Current == 0 ->
             StartTime_ = os:timestamp(),
-            gen_server:cast(Pid, {run, Current + 1, M});
+            gen_server:cast(Pid, {run, Current + 1, M}),
+            State = #state{nextPid=Pid,countProcess=N, startTime = StartTime_, endTime = EndTime},
+            {noreply, State};
         Current == M * N ->
-            EndTime = os:timestamp(),
+            EndTime_ = os:timestamp(),
             %%TODO add unlock in ets table
-            write_to_log(Pid, N, M, StartTime, EndTime);
+            write_to_log(Pid, N, M, StartTime, EndTime_),
+            State = #state{nextPid=Pid,countProcess=N, startTime = StartTime, endTime = EndTime_},
+            {noreply, State};
         true ->
-            gen_server:cast(Pid, {run,Current + 1, M})
-    end,
-    {noreply, #state{nextPid=Pid,countProcess=N,startTime = StartTime, endTime = EndTime}}
+            Event = {run,Current + 1, M},
+            gen_server:cast(Pid, Event),
+            State = #state{nextPid=Pid,countProcess=N, startTime = StartTime, endTime = EndTime},
+            {noreply, State}
     end;
 
 handle_cast(_Msg, State) ->
@@ -65,5 +71,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 write_to_log(Pid, N, M,StartTime, EndTime) ->
     Host = {localhost, 27017}, %%TODO move parametr to application env
-    {ok, Conn} = mongo:connect (Host),
-    Res = mongo:do (safe, master, Conn, test, fun() -> mongo:insert(log, {pid, Pid, n N, m M, startTime StartTime, endTime EndTime}) end).
+    {ok, Conn} = mongo:connect(Host),
+    Log = #log{pid=Pid, n=N, m=M, startTime=StartTime, endTime=EndTime},
+    mongo:do(safe, master, Conn, test, fun() -> mongo:insert(log, Log) end).

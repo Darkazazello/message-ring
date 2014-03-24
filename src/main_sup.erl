@@ -11,7 +11,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/1]).
+-export([start_link/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -32,6 +32,6 @@ init(_Args) ->
     Shutdown = infinity,
     Type = supervisor,
 
-    ringSupStart = {ring_handler_suo, {ring_handler_sup, start_link, []},
+    RingSupStart = {ring_handler_sup, {ring_handler_sup, start_link, []},
                  Restart, Shutdown, Type, [ring_handler_sup]},
-    {ok, {SupFlags, [ringSupStart]}}.
+    {ok, {SupFlags, [RingSupStart]}}.

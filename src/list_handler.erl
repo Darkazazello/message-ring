@@ -7,10 +7,12 @@
 init(_Transport, Req, []) ->
     {ok, Req, undefined}.
 
-handle(Req, State) ->
-    cowboy_req:reply(200, [
-                           {<<"content-type">>, <<"application/json; charset=utf-8">>}
-                          ], get_rings(), Req).
+handle(_Req, _State) ->
+    %StringConverted = lists:map(ConvertFun, get_rings()),
+%    Output = mochijson2:encode(get_rings()),
+   cowboy_req:reply(200, [
+                           {<<"content-type">>, <<"text/html; charset=utf-8">>}
+                          ], get_rings(), _Req).
 
 terminate(_Reason, _Req, _State) ->
 	ok.

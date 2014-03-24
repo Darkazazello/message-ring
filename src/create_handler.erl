@@ -18,10 +18,10 @@ echo(<<"GET">>, undefined, Req) ->
 echo(<<"GET">>, N, Req) ->
     {N_,Tail} = string:to_integer(N),
     if
-        N == error ->
+        N_ == error ->
             cowboy_req:reply(400, [], <<"N parametr must be integer.">>, Req);
         Tail == [] ->
-            Res = create_ring(N),
+            Res = create_ring(N_),
             if
                 Res == ok ->
                     cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "ok", Req);
@@ -42,23 +42,24 @@ terminate(_Reason, _Req, _State) ->
 create_ring(N) ->
     Res = supervisor:start_child(main_sup, []),
     if
-        Res == {ok, SupPid} ->
+         erlang:element(1, Res)== ok ->
+            {ok, SupPid} = Res,
             Pids = create_handlers(SupPid,N, []),
             ets:insert(rings, [{status, pending}, {supId, SupPid}, {n,N}]),
+            ok,
             if
-                Pids == {error, _} ->
+                error == Pids ->
                     {error, "Create message ring failed"};
                 true ->
-                    [First | _] = Pids
-                    init_ring(N, lists:append(Pids,First))
+                    [First | _] = Pids,
+                    init_ring(N, lists:append(Pids,First)),
+                    ok
             end;
-        
         true ->
             {error, "Create message ring failed"}
-    end
-        ok.
+    end.
     
-create_handlers(Pid,0, Pids) -> 
+create_handlers(_Pid,0, Pids) -> 
     Pids;
 create_handlers(Pid, N, Pids) ->
     Res = supervisor:start_child(Pid, []),
@@ -66,12 +67,12 @@ create_handlers(Pid, N, Pids) ->
         Res == {ok, Pid} ->
             create_handlers(Pid, N - 1, lists:append(Pids, Pid));
         true ->
-            {error, "Fail"}
+            error
     end.
 
-init_ring(_, H|[]) ->
+init_ring(_, [_H|[]]) ->
     ok;
-init_ring(N, H|Tail) ->
+init_ring(N, [H|Tail]) ->
     [NextPid | _] = Tail,
     gen_server:call(H, {init,NextPid,N}),
     init_ring(N, Tail).
