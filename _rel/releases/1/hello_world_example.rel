@@ -6,6 +6,8 @@
           {crypto,"2.1"},
           {mongodb,"0.2.1"},
           {bson,"0"},
+          {jsx,"1.4.5"},
           {cowlib,"0.5.1"},
+          {mongrel,"1.1.6"},
           {cowboy,"0.9.0"},
           {hello_world,"1"}]}. 

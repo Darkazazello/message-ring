@@ -3,6 +3,8 @@
 -export([init/3]).
 -export([handle/2]).
 -export([terminate/3]).
+-export([run_ring/2]).
+-include("../include/ring.hrl").
 
 init(_Transport, Req, []) ->
     {ok, Req, undefined}.
@@ -17,22 +19,23 @@ handle(Req, State) ->
 
 echo(<<"GET">>, undefined, _,Req) ->
     cowboy_req:reply(400, [], <<"Missing M parameter.">>, Req);
+
 echo(<<"GET">>, _, undefined,Req) ->
     cowboy_req:reply(400, [], <<"Missing Id parameter.">>, Req);
+
 echo(<<"GET">>, M, Id, Req) ->
-    {M_,Tail} = string:to_integer(M),
+    M_ = to_int(M),
+    Id_ = to_int(Id),
     if
-        M_ == error ->
-            cowboy_req:reply(400, [], <<"M parametr must be integer.">>, Req);
-        Tail == [] ->
-            run_ring(Id, M_), 
+        (M_ == error) or (Id_ == error) ->
+            cowboy_req:reply(400, [], <<"Incorrect parameters.">>, Req);
+        true ->
+            run_ring(Id_,M_),
             cowboy_req:reply(200, [
                                    {<<"content-type">>, <<"text/plain; charset=utf-8">>}
-	], "ok", Req);
-         true ->
-            cowboy_req:reply(400, [], <<"M parametr must be integer.">>, Req)
-     end;   
-
+                                  ], "ok", Req)
+        end;
+ 
 echo(_, _, _,Req) ->
 	%% Method not allowed.
 	cowboy_req:reply(405, Req).
@@ -40,6 +43,17 @@ echo(_, _, _,Req) ->
 terminate(_Reason, _Req, _State) ->
 	ok.
 
-run_ring(Id, _) ->
-    _ = ets:match(pending, {Id,'$1', '_'}),
-    ok.
+run_ring(Id, M) ->
+    [[WorkerId|_]|_] = ets:match(rings, #ring{id=Id, workerPid = '$1', supPid = '_', status=pending, n='_'}),
+    gen_server:cast(WorkerId, {run, 0, M}).
+    
+to_int(A) ->
+    {A_,Tail} = string:to_integer(binary:bin_to_list(A)),
+    if
+        A_ == error ->
+            error;
+        Tail > [] ->
+            error;
+        true ->
+            A_
+    end.

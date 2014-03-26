@@ -19,7 +19,7 @@
 -define(SERVER, ?MODULE).
 
 start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link(?MODULE, []).
 
 init(_Args) ->
     RestartStrategy = simple_one_for_one,

@@ -8,10 +8,14 @@
 -export([start/2]).
 -export([stop/1]).
 
+-include("../include/log.hrl").
+-include_lib("../deps/mongrel/include/mongrel_macros.hrl").
+
 %% API.
 
 start(_Type, _Args) ->
     initialEts(),
+    mongrel_mapper:add_mapping(?mapping(log)),
     Dispatch = cowboy_router:compile([
                                       {'_', [
                                              {"/create", create_handler, []},
