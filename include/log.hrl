@@ -1,0 +1,1 @@
+-record(log, {'_id',pid, n, m, startTime, endTime}).
