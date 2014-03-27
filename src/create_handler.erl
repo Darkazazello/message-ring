@@ -26,10 +26,12 @@ echo(<<"GET">>, N, Req) ->
         true ->
             Res = create_ring(N_),
             if
-                Res == ok ->
-                    cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "ok", Req);
+                Res == error ->
+                    cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "failed", Req);
                 true ->
-                    cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "failed", Req)
+                    cowboy_req:reply(200, [{<<"content-type">>, <<"text/html; charset=utf-8">>}],
+                                     <<"<html><body><a href='/list'>View</a> all pending process</body></html>">>,Req)
+                 
             end
     end;
 
@@ -47,15 +49,17 @@ create_ring(N) ->
             Pids = create_handlers(SupPid,N, []),
             if
                 error == Pids ->
-                    {error, "Create message ring failed"};
+                    error;
                 true ->
                     [First | _] = Pids,
                     {_,_,Id} = os:timestamp(),
                     ets:insert(rings, #ring{id=Id, status=pending, supPid = SupPid, workerPid = First, n=N}),
-                    init_ring(N, lists:append(Pids,[First]))
+                    init_ring(N, lists:append(Pids,[First])),
+                    First
+            
             end;
         true ->
-            {error, "Create message ring failed"}
+            error
     end.
     
 create_handlers(_Pid, _N, Pids) when _N == 0 -> 

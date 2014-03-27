@@ -15,7 +15,7 @@
 {application, cowboy, [
 	{description, "Small, fast, modular HTTP server."},
 	{vsn, "0.9.0"},
-	{modules, [cowboy_loop_handler, cowboy_app, cowboy_static, cowboy_websocket, cowboy_sup, cowboy_websocket_handler, cowboy_rest, cowboy_handler, cowboy_clock, cowboy_spdy, cowboy_http, cowboy_sub_protocol, cowboy_client, cowboy_protocol, cowboy_middleware, cowboy_req, cowboy, cowboy_bstr, cowboy_router, cowboy_http_handler]},
+	{modules, [cowboy_loop_handler, cowboy_app, cowboy_static, cowboy_websocket, cowboy_sup, cowboy_websocket_handler, cowboy_rest, cowboy_handler, cowboy_clock, cowboy_spdy, cowboy_http, cowboy_sub_protocol, cowboy_protocol, cowboy_middleware, cowboy_req, cowboy, cowboy_bstr, cowboy_router, cowboy_http_handler]},
 	{registered, [cowboy_clock, cowboy_sup]},
 	{applications, [
 		kernel,

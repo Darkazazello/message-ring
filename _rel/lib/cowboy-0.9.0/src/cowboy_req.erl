@@ -13,31 +13,6 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @doc HTTP request manipulation API.
-%%
-%% The functions in this module try to follow this pattern for their
-%% return types:
-%% <dl>
-%% <dt>access:</dt>
-%%   <dd><em>{Value, Req}</em></dd>
-%% <dt>action:</dt>
-%%   <dd><em>{Result, Req} | {Result, Value, Req} | {error, atom()}</em></dd>
-%% <dt>modification:</dt>
-%%   <dd><em>Req</em></dd>
-%% <dt>question (<em>has_*</em> or <em>is_*</em>):</dt>
-%%   <dd><em>boolean()</em></dd>
-%% </dl>
-%%
-%% Exceptions include <em>chunk/2</em> which always returns <em>'ok'</em>,
-%% and <em>to_list/1</em> which returns a list of key/values.
-%%
-%% Also note that all body reading functions perform actions, as Cowboy
-%% doesn't read the request body until they are called.
-%%
-%% Whenever <em>Req</em> is returned, it should always be kept in place of
-%% the one given as argument in your function call, because it keeps
-%% track of the request and response state. Doing so allows Cowboy to do
-%% some lazy evaluation and cache results when possible.
 -module(cowboy_req).
 
 %% Request API.
@@ -125,11 +100,7 @@
 	-> {ok, binary()}
 	| {error, atom()}).
 -type transfer_decode_fun() :: fun((binary(), any())
-	-> {ok, binary(), binary(), any()}
-	| more | {more, non_neg_integer(), binary(), any()}
-	| {done, non_neg_integer(), binary()}
-	| {done, binary(), non_neg_integer(), binary()}
-	| {error, atom()}).
+	-> cow_http_te:decode_ret()).
 
 -type resp_body_fun() :: fun((any(), module()) -> ok).
 -type send_chunk_fun() :: fun((iodata()) -> ok | {error, atom()}).
@@ -184,13 +155,6 @@
 
 %% Request API.
 
-%% @doc Create a new HTTP Req object.
-%%
-%% This function takes care of setting the owner's pid to self().
-%% @private
-%%
-%% Since we always need to parse the Connection header, we do it
-%% in an optimized way and add the parsed value to p_headers' cache.
 -spec new(any(), module(),
 	undefined | {inet:ip_address(), inet:port_number()},
 	binary(), binary(), binary(),
@@ -213,72 +177,58 @@ new(Socket, Transport, Peer, Method, Path, Query,
 				false ->
 					Req; %% keepalive
 				{_, ConnectionHeader} ->
-					Tokens = parse_connection_before(ConnectionHeader, []),
+					Tokens = cow_http_hd:parse_connection(ConnectionHeader),
 					Connection = connection_to_atom(Tokens),
 					Req#http_req{connection=Connection,
 						p_headers=[{<<"connection">>, Tokens}]}
 			end
 	end.
 
-%% @doc Return the HTTP method of the request.
 -spec method(Req) -> {binary(), Req} when Req::req().
 method(Req) ->
 	{Req#http_req.method, Req}.
 
-%% @doc Return the HTTP version used for the request.
 -spec version(Req) -> {cowboy:http_version(), Req} when Req::req().
 version(Req) ->
 	{Req#http_req.version, Req}.
 
-%% @doc Return the peer address and port number of the remote host.
 -spec peer(Req)
 	-> {{inet:ip_address(), inet:port_number()}, Req}
 	when Req::req().
 peer(Req) ->
 	{Req#http_req.peer, Req}.
 
-%% @doc Return the host binary string.
 -spec host(Req) -> {binary(), Req} when Req::req().
 host(Req) ->
 	{Req#http_req.host, Req}.
 
-%% @doc Return the extra host information obtained from partially matching
-%% the hostname using <em>'...'</em>.
 -spec host_info(Req)
 	-> {cowboy_router:tokens() | undefined, Req} when Req::req().
 host_info(Req) ->
 	{Req#http_req.host_info, Req}.
 
-%% @doc Return the port used for this request.
 -spec port(Req) -> {inet:port_number(), Req} when Req::req().
 port(Req) ->
 	{Req#http_req.port, Req}.
 
-%% @doc Return the path binary string.
 -spec path(Req) -> {binary(), Req} when Req::req().
 path(Req) ->
 	{Req#http_req.path, Req}.
 
-%% @doc Return the extra path information obtained from partially matching
-%% the patch using <em>'...'</em>.
 -spec path_info(Req)
 	-> {cowboy_router:tokens() | undefined, Req} when Req::req().
 path_info(Req) ->
 	{Req#http_req.path_info, Req}.
 
-%% @doc Return the raw query string directly taken from the request.
 -spec qs(Req) -> {binary(), Req} when Req::req().
 qs(Req) ->
 	{Req#http_req.qs, Req}.
 
-%% @equiv qs_val(Name, Req, undefined)
 -spec qs_val(binary(), Req)
 	-> {binary() | true | undefined, Req} when Req::req().
 qs_val(Name, Req) when is_binary(Name) ->
 	qs_val(Name, Req, undefined).
 
-%% @doc Return the query string value for the given key, or a default if
-%% missing.
 -spec qs_val(binary(), Req, Default)
 	-> {binary() | true | Default, Req} when Req::req(), Default::any().
 qs_val(Name, Req=#http_req{qs=RawQs, qs_vals=undefined}, Default)
@@ -291,7 +241,6 @@ qs_val(Name, Req, Default) ->
 		false -> {Default, Req}
 	end.
 
-%% @doc Return the full list of query string values.
 -spec qs_vals(Req) -> {list({binary(), binary() | true}), Req} when Req::req().
 qs_vals(Req=#http_req{qs=RawQs, qs_vals=undefined}) ->
 	QsVals = cow_qs:parse_qs(RawQs),
@@ -299,10 +248,7 @@ qs_vals(Req=#http_req{qs=RawQs, qs_vals=undefined}) ->
 qs_vals(Req=#http_req{qs_vals=QsVals}) ->
 	{QsVals, Req}.
 
-%% @doc Return the request URL as a binary without the path and query string.
-%%
 %% The URL includes the scheme, host and port only.
-%% @see cowboy_req:url/1
 -spec host_url(Req) -> {undefined | binary(), Req} when Req::req().
 host_url(Req=#http_req{port=undefined}) ->
 	{undefined, Req};
@@ -319,8 +265,6 @@ host_url(Req=#http_req{transport=Transport, host=Host, port=Port}) ->
 	end,
 	{<< "http", Secure/binary, "://", Host/binary, PortBin/binary >>, Req}.
 
-%% @doc Return the full request URL as a binary.
-%%
 %% The URL includes the scheme, host, port, path and query string.
 -spec url(Req) -> {undefined | binary(), Req} when Req::req().
 url(Req=#http_req{}) ->
@@ -336,13 +280,10 @@ url(HostURL, Req=#http_req{path=Path, qs=QS}) ->
 	end,
 	{<< HostURL/binary, Path/binary, QS2/binary >>, Req}.
 
-%% @equiv binding(Name, Req, undefined)
 -spec binding(atom(), Req) -> {any() | undefined, Req} when Req::req().
 binding(Name, Req) when is_atom(Name) ->
 	binding(Name, Req, undefined).
 
-%% @doc Return the binding value for the given key obtained when matching
-%% the host and path against the dispatch list, or a default if missing.
 -spec binding(atom(), Req, Default)
 	-> {any() | Default, Req} when Req::req(), Default::any().
 binding(Name, Req, Default) when is_atom(Name) ->
@@ -351,18 +292,15 @@ binding(Name, Req, Default) when is_atom(Name) ->
 		false -> {Default, Req}
 	end.
 
-%% @doc Return the full list of binding values.
 -spec bindings(Req) -> {[{atom(), any()}], Req} when Req::req().
 bindings(Req) ->
 	{Req#http_req.bindings, Req}.
 
-%% @equiv header(Name, Req, undefined)
 -spec header(binary(), Req)
 	-> {binary() | undefined, Req} when Req::req().
 header(Name, Req) ->
 	header(Name, Req, undefined).
 
-%% @doc Return the header value for the given key, or a default if missing.
 -spec header(binary(), Req, Default)
 	-> {binary() | Default, Req} when Req::req(), Default::any().
 header(Name, Req, Default) ->
@@ -371,16 +309,10 @@ header(Name, Req, Default) ->
 		false -> {Default, Req}
 	end.
 
-%% @doc Return the full list of headers.
 -spec headers(Req) -> {cowboy:http_headers(), Req} when Req::req().
 headers(Req) ->
 	{Req#http_req.headers, Req}.
 
-%% @doc Semantically parse headers.
-%%
-%% When the value isn't found, a proper default value for the type
-%% returned is used as a return value.
-%% @see parse_header/3
 -spec parse_header(binary(), Req)
 	-> {ok, any(), Req} | {undefined, binary(), Req}
 	| {error, badarg} when Req::req().
@@ -390,14 +322,10 @@ parse_header(Name, Req=#http_req{p_headers=PHeaders}) ->
 		{Name, Value} -> {ok, Value, Req}
 	end.
 
-%% @doc Default values for semantic header parsing.
 -spec parse_header_default(binary()) -> any().
 parse_header_default(<<"transfer-encoding">>) -> [<<"identity">>];
 parse_header_default(_Name) -> undefined.
 
-%% @doc Semantically parse headers.
-%%
-%% When the header is unknown, the value is returned directly without parsing.
 -spec parse_header(binary(), Req, any())
 	-> {ok, any(), Req} | {undefined, binary(), Req}
 	| {error, badarg} when Req::req().
@@ -427,7 +355,7 @@ parse_header(Name = <<"authorization">>, Req, Default) ->
 			cowboy_http:token_ci(Value, fun cowboy_http:authorization/2)
 		end);
 parse_header(Name = <<"content-length">>, Req, Default) ->
-	parse_header(Name, Req, Default, fun cowboy_http:digits/1);
+	parse_header(Name, Req, Default, fun cow_http_hd:parse_content_length/1);
 parse_header(Name = <<"content-type">>, Req, Default) ->
 	parse_header(Name, Req, Default, fun cowboy_http:content_type/1);
 parse_header(Name = <<"cookie">>, Req, Default) ->
@@ -454,10 +382,10 @@ parse_header(Name, Req, Default)
 		fun (Value) ->
 			cowboy_http:nonempty_list(Value, fun cowboy_http:token/2)
 		end);
-%% @todo Extension parameters.
-parse_header(Name, Req, Default)
-		when Name =:= <<"transfer-encoding">>;
-			Name =:= <<"upgrade">> ->
+parse_header(Name = <<"transfer-encoding">>, Req, Default) ->
+	parse_header(Name, Req, Default, fun cow_http_hd:parse_transfer_encoding/1);
+%% @todo Product version.
+parse_header(Name = <<"upgrade">>, Req, Default) ->
 	parse_header(Name, Req, Default,
 		fun (Value) ->
 			cowboy_http:nonempty_list(Value, fun cowboy_http:token_ci/2)
@@ -481,14 +409,11 @@ parse_header(Name, Req=#http_req{p_headers=PHeaders}, Default, Fun) ->
 			end
 	end.
 
-%% @equiv cookie(Name, Req, undefined)
 -spec cookie(binary(), Req)
 	-> {binary() | undefined, Req} when Req::req().
 cookie(Name, Req) when is_binary(Name) ->
 	cookie(Name, Req, undefined).
 
-%% @doc Return the cookie value for the given key, or a default if
-%% missing.
 -spec cookie(binary(), Req, Default)
 	-> {binary() | Default, Req} when Req::req(), Default::any().
 cookie(Name, Req=#http_req{cookies=undefined}, Default) when is_binary(Name) ->
@@ -504,7 +429,6 @@ cookie(Name, Req, Default) ->
 		false -> {Default, Req}
 	end.
 
-%% @doc Return the full list of cookie values.
 -spec cookies(Req) -> {list({binary(), binary()}), Req} when Req::req().
 cookies(Req=#http_req{cookies=undefined}) ->
 	case parse_header(<<"cookie">>, Req) of
@@ -519,16 +443,10 @@ cookies(Req=#http_req{cookies=undefined}) ->
 cookies(Req=#http_req{cookies=Cookies}) ->
 	{Cookies, Req}.
 
-%% @equiv meta(Name, Req, undefined)
 -spec meta(atom(), Req) -> {any() | undefined, Req} when Req::req().
 meta(Name, Req) ->
 	meta(Name, Req, undefined).
 
-%% @doc Return metadata information about the request.
-%%
-%% Metadata information varies from one protocol to another. Websockets
-%% would define the protocol version here, while REST would use it to
-%% indicate which media type, language and charset were retained.
 -spec meta(atom(), Req, any()) -> {any(), Req} when Req::req().
 meta(Name, Req, Default) ->
 	case lists:keyfind(Name, 1, Req#http_req.meta) of
@@ -536,18 +454,12 @@ meta(Name, Req, Default) ->
 		false -> {Default, Req}
 	end.
 
-%% @doc Set metadata information.
-%%
-%% You can use this function to attach information about the request.
-%%
-%% If the value already exists it will be overwritten.
 -spec set_meta(atom(), any(), Req) -> Req when Req::req().
 set_meta(Name, Value, Req=#http_req{meta=Meta}) ->
-	Req#http_req{meta=[{Name, Value}|lists:keydelete(Name, 1, Meta)]}.
+	Req#http_req{meta=lists:keystore(Name, 1, Meta, {Name, Value})}.
 
 %% Request Body API.
 
-%% @doc Return whether the request message has a body.
 -spec has_body(req()) -> boolean().
 has_body(Req) ->
 	case lists:keyfind(<<"content-length">>, 1, Req#http_req.headers) of
@@ -559,8 +471,6 @@ has_body(Req) ->
 			lists:keymember(<<"transfer-encoding">>, 1, Req#http_req.headers)
 	end.
 
-%% @doc Return the request message body length, if known.
-%%
 %% The length may not be known if Transfer-Encoding is not identity,
 %% and the body hasn't been read at the time of the call.
 -spec body_length(Req) -> {undefined | non_neg_integer(), Req} when Req::req().
@@ -573,12 +483,6 @@ body_length(Req) ->
 			{undefined, Req2}
 	end.
 
-%% @doc Initialize body streaming and set custom decoding functions.
-%%
-%% Calling this function is optional. It should only be used if you
-%% need to override the default behavior of Cowboy. Otherwise you
-%% should call stream_body/{1,2} directly.
-%%
 %% Two decodings happen. First a decoding function is applied to the
 %% transferred data, and then another is applied to the actual content.
 %%
@@ -587,34 +491,17 @@ body_length(Req) ->
 %% also initialized through this function.
 %%
 %% Content encoding is generally used for compression.
-%%
-%% Standard encodings can be found in cowboy_http.
 -spec init_stream(transfer_decode_fun(), any(), content_decode_fun(), Req)
 	-> {ok, Req} when Req::req().
 init_stream(TransferDecode, TransferState, ContentDecode, Req) ->
 	{ok, Req#http_req{body_state=
 		{stream, 0, TransferDecode, TransferState, ContentDecode}}}.
 
-%% @equiv stream_body(1000000, Req)
 -spec stream_body(Req) -> {ok, binary(), Req}
 	| {done, Req} | {error, atom()} when Req::req().
 stream_body(Req) ->
 	stream_body(1000000, Req).
 
-%% @doc Stream the request's body.
-%%
-%% This is the most low level function to read the request body.
-%%
-%% In most cases, if they weren't defined before using init_stream/4,
-%% this function will guess which transfer and content encodings were
-%% used for building the request body, and configure the decoding
-%% functions that will be used when streaming.
-%%
-%% It then starts streaming the body, returning {ok, Data, Req}
-%% for each streamed part, and {done, Req} when it's finished streaming.
-%%
-%% You can limit the size of the chunks being returned by using the
-%% first argument which is the size in bytes. It defaults to 1000000 bytes.
 -spec stream_body(non_neg_integer(), Req) -> {ok, binary(), Req}
 	| {done, Req} | {error, atom()} when Req::req().
 stream_body(MaxLength, Req=#http_req{body_state=waiting, version=Version,
@@ -632,7 +519,7 @@ stream_body(MaxLength, Req=#http_req{body_state=waiting, version=Version,
 		{ok, [<<"chunked">>], Req2} ->
 			stream_body(MaxLength, Req2#http_req{body_state=
 				{stream, 0,
-					fun cowboy_http:te_chunked/2, {0, 0},
+					fun cow_http_te:stream_chunked/2, {0, 0},
 					fun cowboy_http:ce_identity/1}});
 		{ok, [<<"identity">>], Req2} ->
 			{Length, Req3} = body_length(Req2),
@@ -642,7 +529,7 @@ stream_body(MaxLength, Req=#http_req{body_state=waiting, version=Version,
 				Length ->
 					stream_body(MaxLength, Req3#http_req{body_state=
 						{stream, Length,
-							fun cowboy_http:te_identity/2, {0, Length},
+							fun cow_http_te:stream_identity/2, {0, Length},
 							fun cowboy_http:ce_identity/1}})
 			end
 	end;
@@ -666,31 +553,34 @@ stream_body_recv(MaxLength, Req=#http_req{
 		{error, Reason} -> {error, Reason}
 	end.
 
+%% @todo Handle chunked after-the-facts headers.
+%% @todo Depending on the length returned we might want to 0 or +5 it.
 -spec transfer_decode(binary(), Req)
 	-> {ok, binary(), Req} | {error, atom()} when Req::req().
 transfer_decode(Data, Req=#http_req{body_state={stream, _,
 		TransferDecode, TransferState, ContentDecode}}) ->
 	case TransferDecode(Data, TransferState) of
-		{ok, Data2, Rest, TransferState2} ->
-			content_decode(ContentDecode, Data2,
-				Req#http_req{buffer=Rest, body_state={stream, 0,
-				TransferDecode, TransferState2, ContentDecode}});
-		%% @todo {header(s) for chunked
 		more ->
 			stream_body_recv(0, Req#http_req{buffer=Data, body_state={stream,
 				0, TransferDecode, TransferState, ContentDecode}});
-		{more, Length, Data2, TransferState2} ->
+		{more, Data2, TransferState2} ->
+			content_decode(ContentDecode, Data2,
+				Req#http_req{body_state={stream, 0,
+				TransferDecode, TransferState2, ContentDecode}});
+		{more, Data2, Length, TransferState2} when is_integer(Length) ->
 			content_decode(ContentDecode, Data2,
 				Req#http_req{body_state={stream, Length,
+				TransferDecode, TransferState2, ContentDecode}});
+		{more, Data2, Rest, TransferState2} ->
+			content_decode(ContentDecode, Data2,
+				Req#http_req{buffer=Rest, body_state={stream, 0,
 				TransferDecode, TransferState2, ContentDecode}});
 		{done, Length, Rest} ->
 			Req2 = transfer_decode_done(Length, Rest, Req),
 			{done, Req2};
 		{done, Data2, Length, Rest} ->
 			Req2 = transfer_decode_done(Length, Rest, Req),
-			content_decode(ContentDecode, Data2, Req2);
-		{error, Reason} ->
-			{error, Reason}
+			content_decode(ContentDecode, Data2, Req2)
 	end.
 
 -spec transfer_decode_done(non_neg_integer(), binary(), Req)
@@ -707,7 +597,6 @@ transfer_decode_done(Length, Rest, Req=#http_req{
 	Req#http_req{buffer=Rest, body_state=done,
 		headers=Headers3, p_headers=PHeaders3}.
 
-%% @todo Probably needs a Rest.
 -spec content_decode(content_decode_fun(), binary(), Req)
 	-> {ok, binary(), Req} | {error, atom()} when Req::req().
 content_decode(ContentDecode, Data, Req) ->
@@ -716,12 +605,10 @@ content_decode(ContentDecode, Data, Req) ->
 		{error, Reason} -> {error, Reason}
 	end.
 
-%% @equiv body(8000000, Req)
 -spec body(Req) -> {ok, binary(), Req} | {error, atom()} when Req::req().
 body(Req) ->
 	body(8000000, Req).
 
-%% @doc Return the body sent with the request.
 -spec body(non_neg_integer() | infinity, Req)
 	-> {ok, binary(), Req} | {error, atom()} when Req::req().
 body(MaxBodyLength, Req) ->
@@ -757,15 +644,12 @@ skip_body(Req) ->
 		{error, Reason} -> {error, Reason}
 	end.
 
-%% @equiv body_qs(16000, Req)
 -spec body_qs(Req)
 	-> {ok, [{binary(), binary() | true}], Req} | {error, atom()}
 	when Req::req().
 body_qs(Req) ->
 	body_qs(16000, Req).
 
-%% @doc Return the body sent with the request, parsed as an
-%% application/x-www-form-urlencoded string.
 %% Essentially a POST query string.
 -spec body_qs(non_neg_integer() | infinity, Req)
 	-> {ok, [{binary(), binary() | true}], Req} | {error, atom()}
@@ -780,7 +664,6 @@ body_qs(MaxBodyLength, Req) ->
 
 %% Multipart API.
 
-%% @doc Return the next part's headers.
 -spec part(Req)
 	-> {ok, cow_multipart:headers(), Req} | {done, Req}
 	when Req::req().
@@ -805,7 +688,6 @@ part(Buffer, Req=#http_req{multipart={Boundary, _}}) ->
 			{done, Req#http_req{multipart=undefined}}
 	end.
 
-%% @doc Return the current part's body.
 -spec part_body(Req)
 	-> {ok, binary(), Req} | {more, binary(), Req}
 	when Req::req().
@@ -852,8 +734,6 @@ stream_multipart(Req=#http_req{multipart={Boundary, Buffer}}) ->
 
 %% Response API.
 
-%% @doc Add a cookie header to the response.
-%%
 %% The cookie name cannot contain any of the following characters:
 %%   =,;\s\t\r\n\013\014
 %%
@@ -865,46 +745,19 @@ set_resp_cookie(Name, Value, Opts, Req) ->
 	Cookie = cow_cookie:setcookie(Name, Value, Opts),
 	set_resp_header(<<"set-cookie">>, Cookie, Req).
 
-%% @doc Add a header to the response.
 -spec set_resp_header(binary(), iodata(), Req)
 	-> Req when Req::req().
 set_resp_header(Name, Value, Req=#http_req{resp_headers=RespHeaders}) ->
 	Req#http_req{resp_headers=[{Name, Value}|RespHeaders]}.
 
-%% @doc Add a body to the response.
-%%
-%% The body set here is ignored if the response is later sent using
-%% anything other than reply/2 or reply/3. The response body is expected
-%% to be a binary or an iolist.
 -spec set_resp_body(iodata(), Req) -> Req when Req::req().
 set_resp_body(Body, Req) ->
 	Req#http_req{resp_body=Body}.
 
-%% @doc Add a body stream function to the response.
-%%
-%% The body set here is ignored if the response is later sent using
-%% anything other than reply/2 or reply/3.
-%%
-%% Setting a response stream function without a length means that the
-%% body will be sent until the connection is closed. Cowboy will make
-%% sure that the connection is closed with no extra step required.
-%%
-%% To inform the client that a body has been sent with this request,
-%% Cowboy will add a "Transfer-Encoding: identity" header to the
-%% response.
 -spec set_resp_body_fun(resp_body_fun(), Req) -> Req when Req::req().
 set_resp_body_fun(StreamFun, Req) when is_function(StreamFun) ->
 	Req#http_req{resp_body=StreamFun}.
 
-%% @doc Add a body function to the response.
-%%
-%% The body set here is ignored if the response is later sent using
-%% anything other than reply/2 or reply/3.
-%%
-%% Cowboy will call the given response stream function after sending the
-%% headers. This function must send the specified number of bytes to the
-%% socket it will receive as argument.
-%%
 %% If the body function crashes while writing the response body or writes
 %% fewer bytes than declared the behaviour is undefined.
 -spec set_resp_body_fun(non_neg_integer(), resp_body_fun(), Req)
@@ -918,12 +771,10 @@ set_resp_body_fun(chunked, StreamFun, Req)
 		when is_function(StreamFun) ->
 	Req#http_req{resp_body={chunked, StreamFun}}.
 
-%% @doc Return whether the given header has been set for the response.
 -spec has_resp_header(binary(), req()) -> boolean().
 has_resp_header(Name, #http_req{resp_headers=RespHeaders}) ->
 	lists:keymember(Name, 1, RespHeaders).
 
-%% @doc Return whether a body has been set for the response.
 -spec has_resp_body(req()) -> boolean().
 has_resp_body(#http_req{resp_body=RespBody}) when is_function(RespBody) ->
 	true;
@@ -934,25 +785,21 @@ has_resp_body(#http_req{resp_body={Length, _}}) ->
 has_resp_body(#http_req{resp_body=RespBody}) ->
 	iolist_size(RespBody) > 0.
 
-%% @doc Remove a header previously set for the response.
 -spec delete_resp_header(binary(), Req)
 	-> Req when Req::req().
 delete_resp_header(Name, Req=#http_req{resp_headers=RespHeaders}) ->
 	RespHeaders2 = lists:keydelete(Name, 1, RespHeaders),
 	Req#http_req{resp_headers=RespHeaders2}.
 
-%% @equiv reply(Status, [], [], Req)
 -spec reply(cowboy:http_status(), Req) -> {ok, Req} when Req::req().
 reply(Status, Req=#http_req{resp_body=Body}) ->
 	reply(Status, [], Body, Req).
 
-%% @equiv reply(Status, Headers, [], Req)
 -spec reply(cowboy:http_status(), cowboy:http_headers(), Req)
 	-> {ok, Req} when Req::req().
 reply(Status, Headers, Req=#http_req{resp_body=Body}) ->
 	reply(Status, Headers, Body, Req).
 
-%% @doc Send a reply to the client.
 -spec reply(cowboy:http_status(), cowboy:http_headers(),
 	iodata() | {non_neg_integer() | resp_body_fun()}, Req)
 	-> {ok, Req} when Req::req().
@@ -1080,22 +927,16 @@ reply_no_compress(Status, Headers, Body, Req,
 		Req),
 	Req2.
 
-%% @equiv chunked_reply(Status, [], Req)
 -spec chunked_reply(cowboy:http_status(), Req) -> {ok, Req} when Req::req().
 chunked_reply(Status, Req) ->
 	chunked_reply(Status, [], Req).
 
-%% @doc Initiate the sending of a chunked reply to the client.
-%% @see cowboy_req:chunk/2
 -spec chunked_reply(cowboy:http_status(), cowboy:http_headers(), Req)
 	-> {ok, Req} when Req::req().
 chunked_reply(Status, Headers, Req) ->
 	{_, Req2} = chunked_response(Status, Headers, Req),
 	{ok, Req2}.
 
-%% @doc Send a chunk of data.
-%%
-%% A chunked reply must have been initiated before calling this function.
 -spec chunk(iodata(), req()) -> ok | {error, atom()}.
 chunk(_Data, #http_req{method= <<"HEAD">>}) ->
 	ok;
@@ -1110,8 +951,7 @@ chunk(Data, #http_req{socket=Socket, transport=Transport,
 	Transport:send(Socket, [integer_to_list(iolist_size(Data), 16),
 		<<"\r\n">>, Data, <<"\r\n">>]).
 
-%% @doc Finish the chunked reply.
-%% @todo If ever made public, need to send nothing if HEAD.
+%% If ever made public, need to send nothing if HEAD.
 -spec last_chunk(Req) -> Req when Req::req().
 last_chunk(Req=#http_req{socket=Socket, transport=cowboy_spdy}) ->
 	_ = cowboy_spdy:stream_close(Socket),
@@ -1120,8 +960,6 @@ last_chunk(Req=#http_req{socket=Socket, transport=Transport}) ->
 	_ = Transport:send(Socket, <<"0\r\n\r\n">>),
 	Req#http_req{resp_state=done}.
 
-%% @doc Send an upgrade reply.
-%% @private
 -spec upgrade_reply(cowboy:http_status(), cowboy:http_headers(), Req)
 	-> {ok, Req} when Req::req().
 upgrade_reply(Status, Headers, Req=#http_req{transport=Transport,
@@ -1132,10 +970,7 @@ upgrade_reply(Status, Headers, Req=#http_req{transport=Transport,
 	], <<>>, Req),
 	{ok, Req2#http_req{resp_state=done, resp_headers=[], resp_body= <<>>}}.
 
-%% @doc Send a reply if one hasn't been sent already.
-%%
 %% Meant to be used internally for sending errors after crashes.
-%% @private
 -spec maybe_reply(cowboy:http_status(), req()) -> ok.
 maybe_reply(Status, Req) ->
 	receive
@@ -1145,8 +980,6 @@ maybe_reply(Status, Req) ->
 		ok
 	end.
 
-%% @doc Ensure the response has been sent fully.
-%% @private
 -spec ensure_response(req(), cowboy:http_status()) -> ok.
 %% The response has already been fully sent to the client.
 ensure_response(#http_req{resp_state=done}, _) ->
@@ -1168,12 +1001,10 @@ ensure_response(#http_req{}, _) ->
 
 %% Private setter/getter API.
 
-%% @private
 -spec append_buffer(binary(), Req) -> Req when Req::req().
 append_buffer(Suffix, Req=#http_req{buffer=Buffer}) ->
 	Req#http_req{buffer= << Buffer/binary, Suffix/binary >>}.
 
-%% @private
 -spec get(atom(), req()) -> any(); ([atom()], req()) -> any().
 get(List, Req) when is_list(List) ->
 	[g(Atom, Req) || Atom <- List];
@@ -1208,7 +1039,6 @@ g(socket, #http_req{socket=Ret}) -> Ret;
 g(transport, #http_req{transport=Ret}) -> Ret;
 g(version, #http_req{version=Ret}) -> Ret.
 
-%% @private
 -spec set([{atom(), any()}], Req) -> Req when Req::req().
 set([], Req) -> Req;
 set([{bindings, Val}|Tail], Req) -> set(Tail, Req#http_req{bindings=Val});
@@ -1238,7 +1068,6 @@ set([{socket, Val}|Tail], Req) -> set(Tail, Req#http_req{socket=Val});
 set([{transport, Val}|Tail], Req) -> set(Tail, Req#http_req{transport=Val});
 set([{version, Val}|Tail], Req) -> set(Tail, Req#http_req{version=Val}).
 
-%% @private
 -spec set_bindings(cowboy_router:tokens(), cowboy_router:tokens(),
 	cowboy_router:bindings(), Req) -> Req when Req::req().
 set_bindings(HostInfo, PathInfo, Bindings, Req) ->
@@ -1247,13 +1076,6 @@ set_bindings(HostInfo, PathInfo, Bindings, Req) ->
 
 %% Misc API.
 
-%% @doc Compact the request data by removing all non-system information.
-%%
-%% This essentially removes the host and path info, query string, bindings,
-%% headers and cookies.
-%%
-%% Use it when you really need to save up memory, for example when having
-%% many concurrent long-running connections.
 -spec compact(Req) -> Req when Req::req().
 compact(Req) ->
 	Req#http_req{host_info=undefined,
@@ -1261,13 +1083,10 @@ compact(Req) ->
 		bindings=undefined, headers=[],
 		p_headers=[], cookies=[]}.
 
-%% @doc Prevent any further responses.
-%% @private
 -spec lock(Req) -> Req when Req::req().
 lock(Req) ->
 	Req#http_req{resp_state=locked}.
 
-%% @doc Convert the Req object to a list of key/values.
 -spec to_list(req()) -> [{atom(), any()}].
 to_list(Req) ->
 	lists:zip(record_info(fields, http_req), tl(tuple_to_list(Req))).
@@ -1360,7 +1179,7 @@ response_connection([], Connection) ->
 response_connection([{Name, Value}|Tail], Connection) ->
 	case Name of
 		<<"connection">> ->
-			Tokens = parse_connection_before(Value, []),
+			Tokens = cow_http_hd:parse_connection(Value),
 			connection_to_atom(Tokens);
 		_ ->
 			response_connection(Tail, Connection)
@@ -1402,57 +1221,6 @@ atom_to_connection(keepalive) ->
 atom_to_connection(close) ->
 	<<"close">>.
 
-%% Optimized parsing functions for the Connection header.
-parse_connection_before(<<>>, Acc) ->
-	lists:reverse(Acc);
-parse_connection_before(<< C, Rest/bits >>, Acc)
-		when C =:= $,; C =:= $\s; C =:= $\t ->
-	parse_connection_before(Rest, Acc);
-parse_connection_before(Buffer, Acc) ->
-	parse_connection(Buffer, Acc, <<>>).
-
-%% An evil block of code appeared!
-parse_connection(<<>>, Acc, <<>>) ->
-	lists:reverse(Acc);
-parse_connection(<<>>, Acc, Token) ->
-	lists:reverse([Token|Acc]);
-parse_connection(<< C, Rest/bits >>, Acc, Token)
-		when C =:= $,; C =:= $\s; C =:= $\t ->
-	parse_connection_before(Rest, [Token|Acc]);
-parse_connection(<< C, Rest/bits >>, Acc, Token) ->
-	case C of
-		$A -> parse_connection(Rest, Acc, << Token/binary, $a >>);
-		$B -> parse_connection(Rest, Acc, << Token/binary, $b >>);
-		$C -> parse_connection(Rest, Acc, << Token/binary, $c >>);
-		$D -> parse_connection(Rest, Acc, << Token/binary, $d >>);
-		$E -> parse_connection(Rest, Acc, << Token/binary, $e >>);
-		$F -> parse_connection(Rest, Acc, << Token/binary, $f >>);
-		$G -> parse_connection(Rest, Acc, << Token/binary, $g >>);
-		$H -> parse_connection(Rest, Acc, << Token/binary, $h >>);
-		$I -> parse_connection(Rest, Acc, << Token/binary, $i >>);
-		$J -> parse_connection(Rest, Acc, << Token/binary, $j >>);
-		$K -> parse_connection(Rest, Acc, << Token/binary, $k >>);
-		$L -> parse_connection(Rest, Acc, << Token/binary, $l >>);
-		$M -> parse_connection(Rest, Acc, << Token/binary, $m >>);
-		$N -> parse_connection(Rest, Acc, << Token/binary, $n >>);
-		$O -> parse_connection(Rest, Acc, << Token/binary, $o >>);
-		$P -> parse_connection(Rest, Acc, << Token/binary, $p >>);
-		$Q -> parse_connection(Rest, Acc, << Token/binary, $q >>);
-		$R -> parse_connection(Rest, Acc, << Token/binary, $r >>);
-		$S -> parse_connection(Rest, Acc, << Token/binary, $s >>);
-		$T -> parse_connection(Rest, Acc, << Token/binary, $t >>);
-		$U -> parse_connection(Rest, Acc, << Token/binary, $u >>);
-		$V -> parse_connection(Rest, Acc, << Token/binary, $v >>);
-		$W -> parse_connection(Rest, Acc, << Token/binary, $w >>);
-		$X -> parse_connection(Rest, Acc, << Token/binary, $x >>);
-		$Y -> parse_connection(Rest, Acc, << Token/binary, $y >>);
-		$Z -> parse_connection(Rest, Acc, << Token/binary, $z >>);
-		C -> parse_connection(Rest, Acc, << Token/binary, C >>)
-	end.
-
-%% @doc Walk through a tokens list and return whether
-%% the connection is keepalive or closed.
-%%
 %% We don't match on "keep-alive" since it is the default value.
 -spec connection_to_atom([binary()]) -> keepalive | close.
 connection_to_atom([]) ->
@@ -1525,7 +1293,6 @@ status(B) when is_binary(B) -> B.
 %% Tests.
 
 -ifdef(TEST).
-
 url_test() ->
 	{undefined, _} =
 		url(#http_req{transport=ranch_tcp, host= <<>>, port= undefined,
@@ -1553,19 +1320,7 @@ url_test() ->
 			path= <<"/path">>, qs= <<"dummy=2785">>, pid=self()}),
 	ok.
 
-parse_connection_test_() ->
-	%% {Binary, Result}
-	Tests = [
-		{<<"close">>, [<<"close">>]},
-		{<<"ClOsE">>, [<<"close">>]},
-		{<<"Keep-Alive">>, [<<"keep-alive">>]},
-		{<<"keep-alive, Upgrade">>, [<<"keep-alive">>, <<"upgrade">>]}
-	],
-	[{B, fun() -> R = parse_connection_before(B, []) end}
-		|| {B, R} <- Tests].
-
 connection_to_atom_test_() ->
-	%% {Tokens, Result}
 	Tests = [
 		{[<<"close">>], close},
 		{[<<"keep-alive">>], keepalive},
@@ -1589,5 +1344,4 @@ merge_headers_test_() ->
 		  {<<"server">>,<<"Cowboy">>}]}
 	],
 	[fun() -> Res = merge_headers(L,R) end || {L, R, Res} <- Tests].
-
 -endif.

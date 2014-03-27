@@ -73,5 +73,5 @@ code_change(_OldVsn, State, _Extra) ->
 write_to_log(Pid, N, M,StartTime, EndTime) ->
     Host = {localhost, 27017}, %%TODO move parametr to application env
     {ok, Conn} = mongo:connect(Host),
-    Log = #log{pid=binary:list_to_bin(pid_to_list(Pid)), n=N, m=M, startTime=StartTime, endTime=EndTime},
+    Log = #log{?id(),pid=binary:list_to_bin(pid_to_list(Pid)), n=N, m=M, startTime=StartTime, endTime=EndTime},
     mongrel:do(safe, master, Conn, test, fun() -> mongrel:insert(Log) end).

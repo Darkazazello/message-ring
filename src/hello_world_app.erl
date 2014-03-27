@@ -18,6 +18,7 @@ start(_Type, _Args) ->
     mongrel_mapper:add_mapping(?mapping(log)),
     Dispatch = cowboy_router:compile([
                                       {'_', [
+                                             {"/", list_handler,[]},
                                              {"/create", create_handler, []},
                                              {"/run", run_handler, []},
                                              {"/list", list_handler, []},

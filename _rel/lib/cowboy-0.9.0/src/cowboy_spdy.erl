@@ -12,10 +12,6 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @doc SPDY protocol handler.
-%%
-%% Note that there is no need to monitor these processes when using Cowboy as
-%% an application as it already supervises them under the listener supervisor.
 -module(cowboy_spdy).
 
 %% API.
@@ -41,8 +37,11 @@
 -export([send/2]).
 -export([sendfile/2]).
 
+-type streamid() :: non_neg_integer().
+-type socket() :: {pid(), streamid()}.
+
 -record(child, {
-	streamid :: non_neg_integer(),
+	streamid :: streamid(),
 	pid :: pid(),
 	input = nofin :: fin | nofin,
 	in_buffer = <<>> :: binary(),
@@ -63,7 +62,7 @@
 	peer,
 	zdef,
 	zinf,
-	last_streamid = 0 :: non_neg_integer(),
+	last_streamid = 0 :: streamid(),
 	children = [] :: [#child{}]
 }).
 
@@ -75,7 +74,6 @@
 
 %% API.
 
-%% @doc Start a SPDY protocol process.
 -spec start_link(any(), inet:socket(), module(), any()) -> {ok, pid()}.
 start_link(Ref, Socket, Transport, Opts) ->
 	proc_lib:start_link(?MODULE, init,
@@ -83,15 +81,13 @@ start_link(Ref, Socket, Transport, Opts) ->
 
 %% Internal.
 
-%% @doc Faster alternative to proplists:get_value/3.
-%% @private
+%% Faster alternative to proplists:get_value/3.
 get_value(Key, Opts, Default) ->
 	case lists:keyfind(Key, 1, Opts) of
 		{_, Value} -> Value;
 		_ -> Default
 	end.
 
-%% @private
 -spec init(pid(), ranch:ref(), inet:socket(), module(), opts()) -> ok.
 init(Parent, Ref, Socket, Transport, Opts) ->
 	process_flag(trap_exit, true),
@@ -209,6 +205,7 @@ loop(State=#state{parent=Parent, socket=Socket, transport=Transport,
 		terminate(State)
 	end.
 
+-spec system_continue(_, _, #state{}) -> ok.
 system_continue(_, _, State) ->
 	loop(State).
 
@@ -216,6 +213,7 @@ system_continue(_, _, State) ->
 system_terminate(Reason, _, _, _) ->
 	exit(Reason).
 
+-spec system_code_change(Misc, _, _, _) -> {ok, Misc} when Misc::#state{}.
 system_code_change(Misc, _, _, _) ->
 	{ok, Misc}.
 
@@ -358,6 +356,11 @@ delete_child(Pid, State=#state{children=Children}) ->
 
 %% Request process.
 
+-spec request_init(socket(), {inet:ip_address(), inet:port_number()},
+		cowboy:onrequest_fun(), cowboy:onresponse_fun(),
+		cowboy_middleware:env(), [module()],
+		binary(), binary(), binary(), binary(), [{binary(), binary()}])
+	-> ok.
 request_init(FakeSocket, Peer, OnRequest, OnResponse,
 		Env, Middlewares, Method, Host, Path, Version, Headers) ->
 	{Host2, Port} = cow_http:parse_fullhost(Host),
@@ -394,7 +397,6 @@ execute(Req, Env, [Middleware|Tail]) ->
 			cowboy_req:maybe_reply(Status, Req2)
 	end.
 
-%% @private
 -spec resume(cowboy_middleware:env(), [module()],
 	module(), module(), [any()]) -> ok.
 resume(Env, Tail, Module, Function, Args) ->
@@ -412,6 +414,7 @@ resume(Env, Tail, Module, Function, Args) ->
 
 %% Reply functions used by cowboy_req.
 
+-spec reply(socket(), binary(), cowboy:http_headers(), iodata()) -> ok.
 reply(Socket = {Pid, _}, Status, Headers, Body) ->
 	_ = case iolist_size(Body) of
 		0 -> Pid ! {reply, Socket, Status, Headers};
@@ -419,23 +422,29 @@ reply(Socket = {Pid, _}, Status, Headers, Body) ->
 	end,
 	ok.
 
+-spec stream_reply(socket(), binary(), cowboy:http_headers()) -> ok.
 stream_reply(Socket = {Pid, _}, Status, Headers) ->
 	_ = Pid ! {stream_reply, Socket, Status, Headers},
 	ok.
 
+-spec stream_data(socket(), iodata()) -> ok.
 stream_data(Socket = {Pid, _}, Data) ->
 	_ = Pid ! {stream_data, Socket, Data},
 	ok.
 
+-spec stream_close(socket()) -> ok.
 stream_close(Socket = {Pid, _}) ->
 	_ = Pid ! {stream_close, Socket},
 	ok.
 
 %% Internal transport functions.
 
+-spec name() -> spdy.
 name() ->
 	spdy.
 
+-spec recv(socket(), non_neg_integer(), timeout())
+	-> {ok, binary()} | {error, timeout}.
 recv(Socket = {Pid, _}, Length, Timeout) ->
 	_ = Pid ! {recv, Socket, self(), Length, Timeout},
 	receive
@@ -443,12 +452,14 @@ recv(Socket = {Pid, _}, Length, Timeout) ->
 			Ret
 	end.
 
+-spec send(socket(), iodata()) -> ok.
 send(Socket, Data) ->
 	stream_data(Socket, Data).
 
 %% We don't wait for the result of the actual sendfile call,
 %% therefore we can't know how much was actually sent.
 %% This isn't a problem as we don't use this value in Cowboy.
+-spec sendfile(socket(), file:name_all()) -> {ok, undefined}.
 sendfile(Socket = {Pid, _}, Filepath) ->
 	_ = Pid ! {sendfile, Socket, Filepath},
 	{ok, undefined}.

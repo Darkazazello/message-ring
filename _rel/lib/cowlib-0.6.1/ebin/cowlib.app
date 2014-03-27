@@ -14,8 +14,8 @@
 
 {application, cowlib, [
 	{description, "Support library for manipulating Web protocols."},
-	{vsn, "0.5.1"},
-	{modules, [cow_date, cow_spdy, cow_cookie, cow_qs, cow_mimetypes, cow_multipart, cow_http]},
+	{vsn, "0.6.1"},
+	{modules, [cow_date, cow_spdy, cow_cookie, cow_qs, cow_http_hd, cow_mimetypes, cow_multipart, cow_http, cow_http_te]},
 	{registered, []},
 	{applications, [
 		kernel,

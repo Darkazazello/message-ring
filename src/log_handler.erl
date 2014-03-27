@@ -13,7 +13,7 @@ init(_Transport, Req, []) ->
 handle(Req, _State) ->
 
     cowboy_req:reply(200, [
-                           {<<"content-type">>, <<"text/html; charset=utf-8">>}
+                           {<<"content-type">>, <<"application/json; charset=utf-8">>}
                           ], get_log(), Req).
 
 terminate(_Reason, _Req, _State) ->
@@ -24,7 +24,7 @@ get_log() ->
     {ok, Conn} = mongo:connect(Host),
     {ok, List} = mongrel:do(safe, master, Conn, test,
                fun() ->
-                       Cursor = mongrel:find(#log{m= {'$gt', 0}}, #log{'_id'=0}),
+                       Cursor = mongrel:find(#log{m= {'$gt', 0}}),
                        mongrel_cursor:rest(Cursor)
                end),
     R= io_lib:format("~p",[List]),

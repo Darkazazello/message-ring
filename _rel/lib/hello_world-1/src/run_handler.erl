@@ -30,10 +30,17 @@ echo(<<"GET">>, M, Id, Req) ->
         (M_ == error) or (Id_ == error) ->
             cowboy_req:reply(400, [], <<"Incorrect parameters.">>, Req);
         true ->
-            run_ring(Id_,M_),
-            cowboy_req:reply(200, [
-                                   {<<"content-type">>, <<"text/plain; charset=utf-8">>}
-                                  ], "ok", Req)
+            Ok = run_ring(Id_,M_),
+            if
+                Ok == ok ->
+                    cowboy_req:reply(200, [
+                                           {<<"content-type">>, <<"text/html; charset=utf-8">>}
+                                          ], <<"<html><body>Put in queue.View <a href='/log'>log</a> or <a href='/list'>pending processes.</a></body></html>">>, Req);
+                true ->
+                    cowboy_req:reply(200, [
+                                           {<<"content-type">>, <<"text/html; charset=utf-8">>}
+                                          ], <<"<html><body>Process not found. <a href='/create?n=10'>Create it!</a></body></html>">>, Req)
+            end
         end;
  
 echo(_, _, _,Req) ->
@@ -44,8 +51,15 @@ terminate(_Reason, _Req, _State) ->
 	ok.
 
 run_ring(Id, M) ->
-    [[WorkerId|_]|_] = ets:match(rings, #ring{id=Id, workerPid = '$1', supPid = '_', status=pending, n='_'}),
-    gen_server:cast(WorkerId, {run, 0, M}).
+    Res = ets:match(rings, #ring{id=Id, workerPid = '$1', supPid = '_', status=pending, n='_'}),
+    if
+        Res == [] ->
+            not_found;
+        true ->
+            [[WorkerId|_]|_] = Res,
+            gen_server:cast(WorkerId, {run, 0, M}),
+            ok
+    end.
     
 to_int(A) ->
     {A_,Tail} = string:to_integer(binary:bin_to_list(A)),
