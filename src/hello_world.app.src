@@ -10,7 +10,9 @@
 		stdlib,
 		cowboy,
                 mongodb,
-                bson
+                bson,
+                jsx,
+                mongrel
 	]},
 	{mod, {hello_world_app, []}},
 	{env, []}

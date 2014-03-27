@@ -3,7 +3,8 @@
 -export([init/3]).
 -export([handle/2]).
 -export([terminate/3]).
-
+-export([create_ring/1, create_handlers/3,init_ring/2]).
+-include("../include/ring.hrl").
 init(_Transport, Req, []) ->
     {ok, Req, undefined}.
 
@@ -16,24 +17,23 @@ handle(Req, State) ->
 echo(<<"GET">>, undefined, Req) ->
     cowboy_req:reply(400, [], <<"Missing n parameter.">>, Req);
 echo(<<"GET">>, N, Req) ->
-    {N_,Tail} = string:to_integer(N),
+    {N_,Tail} = string:to_integer(binary:bin_to_list(N)),
     if
         N_ == error ->
-            cowboy_req:reply(400, [], <<"N parametr must be integer.">>, Req);
-        Tail == [] ->
+            cowboy_req:reply(400, [], <<"Incorrect n parameter.">>, Req);
+        Tail > [] ->
+            cowboy_req:reply(400, [], <<"Incorrect n parameter.">>, Req);
+        true ->
             Res = create_ring(N_),
             if
                 Res == ok ->
                     cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "ok", Req);
                 true ->
                     cowboy_req:reply(200, [{<<"content-type">>, <<"text/plain; charset=utf-8">>}], "failed", Req)
-            end;
-         true ->
-            cowboy_req:reply(400, [], <<"N parametr must be integer.">>, Req)
-     end;   
+            end
+    end;
 
 echo(_, _, Req) ->
-	%% Method not allowed.
 	cowboy_req:reply(405, Req).
 
 terminate(_Reason, _Req, _State) ->
@@ -45,27 +45,30 @@ create_ring(N) ->
          erlang:element(1, Res)== ok ->
             {ok, SupPid} = Res,
             Pids = create_handlers(SupPid,N, []),
-            ets:insert(rings, [{status, pending}, {supId, SupPid}, {n,N}]),
-            ok,
             if
                 error == Pids ->
                     {error, "Create message ring failed"};
                 true ->
                     [First | _] = Pids,
-                    init_ring(N, lists:append(Pids,First)),
-                    ok
+                    {_,_,Id} = os:timestamp(),
+                    ets:insert(rings, #ring{id=Id, status=pending, supPid = SupPid, workerPid = First, n=N}),
+                    init_ring(N, lists:append(Pids,[First]))
             end;
         true ->
             {error, "Create message ring failed"}
     end.
     
-create_handlers(_Pid,0, Pids) -> 
+create_handlers(_Pid, _N, Pids) when _N == 0 -> 
     Pids;
+
 create_handlers(Pid, N, Pids) ->
     Res = supervisor:start_child(Pid, []),
     if
-        Res == {ok, Pid} ->
-            create_handlers(Pid, N - 1, lists:append(Pids, Pid));
+        erlang:element(1, Res) == ok  ->
+            {ok, WorkerPid} = Res,
+            NewPids = lists:append(Pids, [WorkerPid]),
+            NewN = N - 1,
+            create_handlers(Pid, NewN, NewPids);
         true ->
             error
     end.

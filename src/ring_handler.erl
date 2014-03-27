@@ -18,13 +18,14 @@
 -define(SERVER, ?MODULE). 
 
 -record(state, {countProcess, nextPid, startTime, endTime}).
--record(log, {pid, n, m, startTime, endTime}).
+-include("../include/log.hrl").
+-include_lib("../deps/mongrel/include/mongrel_macros.hrl").
 
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    gen_server:start_link(?MODULE, [], []).
 
 start() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    gen_server:start_link(?MODULE, [], []).
 
 init(_Args) ->
     {ok, #state{countProcess = 0, nextPid = self(), startTime = os:timestamp(), endTime = os:timestamp()}}.
@@ -72,5 +73,5 @@ code_change(_OldVsn, State, _Extra) ->
 write_to_log(Pid, N, M,StartTime, EndTime) ->
     Host = {localhost, 27017}, %%TODO move parametr to application env
     {ok, Conn} = mongo:connect(Host),
-    Log = #log{pid=Pid, n=N, m=M, startTime=StartTime, endTime=EndTime},
-    mongo:do(safe, master, Conn, test, fun() -> mongo:insert(log, Log) end).
+    Log = #log{pid=binary:list_to_bin(pid_to_list(Pid)), n=N, m=M, startTime=StartTime, endTime=EndTime},
+    mongrel:do(safe, master, Conn, test, fun() -> mongrel:insert(Log) end).
