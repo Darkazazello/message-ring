@@ -31,7 +31,7 @@ connection: keep-alive
 server: Cowboy
 date: Fri, 28 Sep 2012 04:10:25 GMT
 content-length: 12
-content-type: text/plain
+content-type: application/json
 
-Hello world!
+[]
 ```
